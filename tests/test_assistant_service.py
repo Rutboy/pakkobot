@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -31,8 +32,9 @@ class FakeMemory:
 
 
 class FakeLLM:
-    def __init__(self, results: list[LLMResult]) -> None:
+    def __init__(self, results: list[LLMResult | BaseException], delay_seconds: float = 0) -> None:
         self.results = results
+        self.delay_seconds = delay_seconds
         self.calls: list[tuple[list[dict[str, str]], bool]] = []
 
     async def create_response(
@@ -42,7 +44,12 @@ class FakeLLM:
         use_web_search: bool,
     ) -> LLMResult:
         self.calls.append((messages, use_web_search))
-        return self.results.pop(0)
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        result = self.results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
 
 class FakeSummarization:
@@ -53,10 +60,14 @@ class FakeSummarization:
         self.calls.append(chat_id)
 
 
-def make_settings(*, enable_web_search: bool = True) -> SimpleNamespace:
+def make_settings(
+    *,
+    enable_web_search: bool = True,
+    max_answer_seconds: float = 30.0,
+) -> SimpleNamespace:
     return SimpleNamespace(
         enable_web_search=enable_web_search,
-        max_answer_seconds=30.0,
+        max_answer_seconds=max_answer_seconds,
         max_response_chars=3500,
     )
 
@@ -119,3 +130,40 @@ async def test_answer_does_not_retry_after_heuristic_web_search() -> None:
 
     assert answer == "Низкая уверенность: источники расходятся."
     assert [use_web_search for _, use_web_search in llm.calls] == [True]
+
+
+async def test_answer_returns_initial_result_when_improvement_budget_is_spent() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM(
+        [make_result("Низкая уверенность: пока могу сказать только X.")],
+        delay_seconds=0.02,
+    )
+    assistant = AssistantService(
+        make_settings(max_answer_seconds=0.001),
+        memory,
+        llm,
+        FakeSummarization(),
+    )  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
+
+    assert answer == "Низкая уверенность: пока могу сказать только X."
+    assert [use_web_search for _, use_web_search in llm.calls] == [False]
+    assert memory.exchanges == [(123, "объясни редкий термин frobnicator", answer)]
+
+
+async def test_answer_keeps_initial_result_when_web_search_retry_times_out() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM(
+        [
+            make_result("Низкая уверенность: вероятно, это X."),
+            TimeoutError(),
+        ]
+    )
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
+
+    assert answer == "Низкая уверенность: вероятно, это X."
+    assert [use_web_search for _, use_web_search in llm.calls] == [False, True]
+    assert memory.exchanges == [(123, "объясни редкий термин frobnicator", answer)]

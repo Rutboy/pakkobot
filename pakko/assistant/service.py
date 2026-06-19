@@ -26,6 +26,7 @@ LOW_CONFIDENCE_PATTERNS = tuple(
     )
 )
 
+
 WEB_SEARCH_RETRY_PROMPT = """Предыдущая попытка ответа получилась низкой уверенности.
 Используй веб-поиск, чтобы проверить факты и усилить ответ, но не затягивай исследование.
 Если после веб-поиска уверенность все еще низкая, дай лучший доступный ответ и прямо отметь это.
@@ -55,22 +56,20 @@ class AssistantService:
         messages = self._build_messages(user_text, context.summary, context.messages)
 
         started_at = time.perf_counter()
-        result = await self._create_response_with_budget(
-            messages,
-            use_web_search=use_web_search,
-            started_at=started_at,
-        )
         web_search_retry = False
+        timed_out = False
+        result = await self._llm.create_response(messages, use_web_search=use_web_search)
 
         if self._should_retry_with_web_search(result, use_web_search, started_at):
             try:
-                result = await self._create_response_with_budget(
+                result = await self._create_response_with_improvement_budget(
                     self._build_retry_messages(messages),
                     use_web_search=True,
                     started_at=started_at,
                 )
                 web_search_retry = True
             except TimeoutError:
+                timed_out = True
                 logger.warning("web_search_retry_timeout chat_id=%s", chat_id)
 
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
@@ -82,14 +81,15 @@ class AssistantService:
         logger.info(
             (
                 "assistant_response chat_id=%s web_search_requested=%s web_search_retry=%s "
-                "web_search_used=%s low_confidence=%s sources=%s model=%s tokens_in=%s "
-                "tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s"
+                "web_search_used=%s low_confidence=%s timed_out=%s sources=%s model=%s "
+                "tokens_in=%s tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s"
             ),
             chat_id,
             use_web_search,
             web_search_retry,
             result.web_search_used,
             is_low_confidence_answer(response_text),
+            timed_out,
             len(result.sources),
             result.model,
             result.usage.input_tokens,
@@ -100,7 +100,7 @@ class AssistantService:
         )
         return response_text[: self._settings.max_response_chars].strip()
 
-    async def _create_response_with_budget(
+    async def _create_response_with_improvement_budget(
         self,
         messages: list[dict[str, str]],
         *,
