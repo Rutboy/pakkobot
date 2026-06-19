@@ -1,4 +1,6 @@
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from pakko.assistant import AssistantService
 from pakko.config import Settings
@@ -9,7 +11,10 @@ from pakko.telegram.handlers import build_router
 
 
 async def run_bot(settings: Settings) -> None:
-    bot = Bot(token=settings.telegram_bot_token.get_secret_value())
+    bot = Bot(
+        token=settings.telegram_bot_token.get_secret_value(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dispatcher = Dispatcher()
 
     repository = SQLiteMemoryRepository(settings.database_path)

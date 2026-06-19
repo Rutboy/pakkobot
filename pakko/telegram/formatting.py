@@ -7,6 +7,7 @@ TELEGRAM_HTML_LIMIT = 3900
 
 HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$")
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+LINK_RE = re.compile(r"\[([^\]]+)]\((https?://[^\s)]+)\)")
 
 
 def split_for_telegram(text: str, limit: int = TELEGRAM_LIMIT) -> Iterable[str]:
@@ -42,5 +43,18 @@ def split_markdown_as_telegram_html(text: str) -> Iterable[str]:
 
 
 def _format_inline(text: str) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for match in LINK_RE.finditer(text):
+        parts.append(_format_bold(match.string[cursor : match.start()]))
+        label = _format_bold(match.group(1))
+        url = html.escape(match.group(2), quote=True)
+        parts.append(f'<a href="{url}">{label}</a>')
+        cursor = match.end()
+    parts.append(_format_bold(text[cursor:]))
+    return "".join(parts)
+
+
+def _format_bold(text: str) -> str:
     escaped = html.escape(text, quote=False)
     return BOLD_RE.sub(r"<b>\1</b>", escaped)

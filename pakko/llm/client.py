@@ -1,12 +1,17 @@
 import logging
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from openai import AsyncOpenAI
 
 from pakko.config import Settings
 
 logger = logging.getLogger(__name__)
+
+TRACKING_QUERY_PREFIXES = ("utm_",)
+TRACKING_QUERY_KEYS = {"fbclid", "gclid", "yclid", "mc_cid", "mc_eid", "igshid", "ref"}
+MAX_INLINE_CITATIONS = 5
 
 
 @dataclass(slots=True)
@@ -23,6 +28,7 @@ class LLMResult:
     usage: LLMUsage
     model: str
     sources: list[str]
+    web_search_used: bool = False
 
 
 class OpenAIResponsesClient:
@@ -52,13 +58,20 @@ class OpenAIResponsesClient:
                     "search_context_size": self._settings.web_search_context_size,
                 }
             ]
+            params["tool_choice"] = "required"
 
         response = await self._client.responses.create(**params)
         text = self._extract_text(response)
         usage = self._extract_usage(response)
         sources = self._extract_sources(response)
         model = str(getattr(response, "model", self._settings.openai_model))
-        return LLMResult(text=text, usage=usage, model=model, sources=sources)
+        return LLMResult(
+            text=text,
+            usage=usage,
+            model=model,
+            sources=sources,
+            web_search_used=self._has_web_search_call(response),
+        )
 
     async def summarize(self, messages: list[dict[str, str]]) -> LLMResult:
         params: dict[str, Any] = {
@@ -74,6 +87,7 @@ class OpenAIResponsesClient:
             usage=self._extract_usage(response),
             model=str(getattr(response, "model", self._settings.openai_model)),
             sources=[],
+            web_search_used=False,
         )
 
     def _extract_usage(self, response: Any) -> LLMUsage:
@@ -102,9 +116,41 @@ class OpenAIResponsesClient:
         for item in getattr(response, "output", []) or []:
             for content in getattr(item, "content", []) or []:
                 text = getattr(content, "text", None)
-                if text:
-                    chunks.append(str(text))
+                if not text:
+                    continue
+                chunks.append(
+                    OpenAIResponsesClient._apply_inline_citations(
+                        str(text),
+                        list(getattr(content, "annotations", []) or []),
+                    )
+                )
         return "\n".join(chunks).strip()
+
+    @staticmethod
+    def _apply_inline_citations(text: str, annotations: list[Any]) -> str:
+        citations = [annotation for annotation in annotations if getattr(annotation, "url", None)]
+        if not citations:
+            return text
+
+        selected = citations[:MAX_INLINE_CITATIONS]
+        selected_ids = {id(annotation) for annotation in selected}
+        parts: list[str] = []
+        cursor = 0
+        for annotation in citations:
+            start = int(getattr(annotation, "start_index", -1) or -1)
+            end = int(getattr(annotation, "end_index", -1) or -1)
+            url = normalize_source_url(str(getattr(annotation, "url", "")))
+            if not url or start < cursor or end <= start or end > len(text):
+                continue
+            parts.append(text[cursor:start])
+            label = text[start:end]
+            if id(annotation) in selected_ids:
+                parts.append(f"[{label}]({url})")
+            else:
+                parts.append(label)
+            cursor = end
+        parts.append(text[cursor:])
+        return "".join(parts)
 
     @staticmethod
     def _extract_sources(response: Any) -> list[str]:
@@ -113,10 +159,37 @@ class OpenAIResponsesClient:
         for item in getattr(response, "output", []) or []:
             for content in getattr(item, "content", []) or []:
                 for annotation in getattr(content, "annotations", []) or []:
-                    url = getattr(annotation, "url", None)
-                    title = getattr(annotation, "title", None)
-                    if not url or url in seen:
-                        continue
-                    seen.add(str(url))
-                    sources.append(f"{title or url}: {url}")
-        return sources
+                    OpenAIResponsesClient._append_source(sources, seen, annotation)
+        return sources[:MAX_INLINE_CITATIONS]
+
+    @staticmethod
+    def _append_source(sources: list[str], seen: set[str], source: Any) -> None:
+        url = normalize_source_url(str(getattr(source, "url", "") or ""))
+        title = str(getattr(source, "title", "") or url)
+        if not url or url in seen:
+            return
+        seen.add(url)
+        sources.append(f"{title}: {url}")
+
+    @staticmethod
+    def _has_web_search_call(response: Any) -> bool:
+        return any(
+            getattr(item, "type", None) == "web_search_call"
+            for item in getattr(response, "output", []) or []
+        )
+
+
+def normalize_source_url(url: str) -> str:
+    if not url:
+        return ""
+    split = urlsplit(url)
+    query = urlencode(
+        [
+            (key, value)
+            for key, value in parse_qsl(split.query, keep_blank_values=True)
+            if key not in TRACKING_QUERY_KEYS
+            and not any(key.startswith(prefix) for prefix in TRACKING_QUERY_PREFIXES)
+        ],
+        doseq=True,
+    )
+    return urlunsplit((split.scheme, split.netloc, split.path, query, ""))

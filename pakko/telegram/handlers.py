@@ -2,6 +2,7 @@ import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.enums import ParseMode
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 
@@ -13,7 +14,7 @@ from pakko.telegram.triggers import is_addressed_to_bot, strip_bot_addressing
 
 logger = logging.getLogger(__name__)
 
-START_TEXT = """Pakko помогает искать информацию, проверять факты и собирать краткие исследования.
+START_TEXT = """Пакко помогает искать информацию, проверять факты и собирать краткие исследования.
 
 В личном чате просто отправьте вопрос. В группе обратитесь ко мне через @username, Pakko или Пакко.
 """
@@ -87,7 +88,7 @@ def build_router(
             async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
                 answer = await assistant.answer(message.chat.id, user_text)
             for chunk in split_markdown_as_telegram_html(answer):
-                await message.answer(chunk, parse_mode="HTML")
+                await message.answer(chunk, parse_mode=ParseMode.HTML)
         except Exception:
             logger.exception("failed_to_handle_message chat_id=%s", message.chat.id)
             await message.answer("Не удалось обработать запрос. Попробуйте еще раз позже.")

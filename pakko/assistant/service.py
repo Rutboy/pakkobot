@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import time
 from datetime import UTC, datetime
 
@@ -39,16 +39,20 @@ class AssistantService:
         result = await self._llm.create_response(messages, use_web_search=use_web_search)
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
 
-        await self._memory.append_exchange(chat_id, user_text, result.text)
+        response_text = result.text
+        await self._memory.append_exchange(chat_id, user_text, response_text)
         await self._summarization.summarize_if_needed(chat_id)
 
         logger.info(
             (
-                "assistant_response chat_id=%s web_search=%s model=%s "
-                "tokens_in=%s tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s"
+                "assistant_response chat_id=%s web_search_requested=%s web_search_used=%s "
+                "sources=%s model=%s tokens_in=%s tokens_out=%s tokens_total=%s "
+                "cost_usd=%.6f elapsed_ms=%s"
             ),
             chat_id,
             use_web_search,
+            result.web_search_used,
+            len(result.sources),
             result.model,
             result.usage.input_tokens,
             result.usage.output_tokens,
@@ -56,7 +60,7 @@ class AssistantService:
             result.usage.estimated_cost_usd,
             elapsed_ms,
         )
-        return result.text[: self._settings.max_response_chars].strip()
+        return response_text[: self._settings.max_response_chars].strip()
 
     def _build_messages(
         self,
@@ -82,5 +86,3 @@ class AssistantService:
             messages.append({"role": message.role, "content": message.content})
         messages.append({"role": "user", "content": user_text})
         return messages
-
-

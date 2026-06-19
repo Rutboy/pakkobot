@@ -16,3 +16,18 @@ def test_split_markdown_as_telegram_html_returns_html_chunks() -> None:
 
 def test_markdown_to_telegram_html_strips_nested_bold_in_heading() -> None:
     assert markdown_to_telegram_html("### **Что важно**") == "<b>Что важно</b>"
+
+def test_markdown_to_telegram_html_formats_markdown_links() -> None:
+    assert (
+        markdown_to_telegram_html("Источник: [OpenAI](https://platform.openai.com/docs)")
+        == 'Источник: <a href="https://platform.openai.com/docs">OpenAI</a>'
+    )
+
+
+def test_markdown_to_telegram_html_formats_real_answer_shape() -> None:
+    text = "Если ты имеешь в виду **сентябрь 2026 в Steam**\n\n### Что я могу сказать точно\n- **SteamDB** — календарь"
+    assert markdown_to_telegram_html(text) == (
+        "Если ты имеешь в виду <b>сентябрь 2026 в Steam</b>\n\n"
+        "<b>Что я могу сказать точно</b>\n"
+        "- <b>SteamDB</b> — календарь"
+    )
