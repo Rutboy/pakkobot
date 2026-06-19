@@ -1,9 +1,9 @@
 import asyncio
 import logging
-import re
 import time
 from datetime import UTC, datetime
 
+from pakko.assistant.confidence import ConfidenceAssessment, assess_confidence
 from pakko.config import Settings
 from pakko.llm.client import LLMResult, OpenAIResponsesClient
 from pakko.llm.prompts import SYSTEM_PROMPT
@@ -14,22 +14,11 @@ from pakko.summarization.service import SummarizationService
 
 logger = logging.getLogger(__name__)
 
-LOW_CONFIDENCE_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\bнизк(?:ая|ой|ую)\s+уверенност",
-        r"\bне\s+до\s+конца\s+увер",
-        r"\bне\s+уверен",
-        r"\bданных\s+недостаточно\b",
-        r"\bнет\s+достоверн(?:ой|ых)\s+информац",
-        r"\blow\s+confidence\b",
-    )
-)
-
-
-WEB_SEARCH_RETRY_PROMPT = """Предыдущая попытка ответа получилась низкой уверенности.
+WEB_SEARCH_RETRY_PROMPT = """Предыдущая попытка ответа получилась низкой уверенности
+или попросила веб-проверку через технический маркер.
 Используй веб-поиск, чтобы проверить факты и усилить ответ, но не затягивай исследование.
-Если после веб-поиска уверенность все еще низкая, дай лучший доступный ответ и прямо отметь это.
+Если после веб-поиска уверенность все еще низкая, дай лучший доступный ответ
+и отметь это только в техническом маркере.
 Не начинай с технических пояснений о повторной попытке."""
 
 
@@ -59,14 +48,16 @@ class AssistantService:
         web_search_retry = False
         timed_out = False
         result = await self._llm.create_response(messages, use_web_search=use_web_search)
+        assessment = self._apply_confidence_assessment(result)
 
-        if self._should_retry_with_web_search(result, use_web_search, started_at):
+        if self._should_retry_with_web_search(assessment, use_web_search, started_at):
             try:
                 result = await self._create_response_with_improvement_budget(
                     self._build_retry_messages(messages),
                     use_web_search=True,
                     started_at=started_at,
                 )
+                assessment = self._apply_confidence_assessment(result)
                 web_search_retry = True
             except TimeoutError:
                 timed_out = True
@@ -81,14 +72,18 @@ class AssistantService:
         logger.info(
             (
                 "assistant_response chat_id=%s web_search_requested=%s web_search_retry=%s "
-                "web_search_used=%s low_confidence=%s timed_out=%s sources=%s model=%s "
+                "web_search_used=%s confidence_level=%s source_reliability=%s "
+                "web_needed=%s confidence_marker_found=%s timed_out=%s sources=%s model=%s "
                 "tokens_in=%s tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s"
             ),
             chat_id,
             use_web_search,
             web_search_retry,
             result.web_search_used,
-            is_low_confidence_answer(response_text),
+            assessment.level,
+            assessment.source,
+            assessment.web_needed,
+            assessment.marker_found,
             timed_out,
             len(result.sources),
             result.model,
@@ -109,7 +104,7 @@ class AssistantService:
     ) -> LLMResult:
         timeout = self._remaining_answer_seconds(started_at)
         if timeout <= 0:
-            raise TimeoutError("Answer time budget exceeded")
+            raise TimeoutError("Answer improvement budget exceeded")
         return await asyncio.wait_for(
             self._llm.create_response(messages, use_web_search=use_web_search),
             timeout=timeout,
@@ -117,18 +112,24 @@ class AssistantService:
 
     def _should_retry_with_web_search(
         self,
-        result: LLMResult,
+        assessment: ConfidenceAssessment,
         use_web_search: bool,
         started_at: float,
     ) -> bool:
         if not self._settings.enable_web_search or use_web_search:
             return False
-        if not is_low_confidence_answer(result.text):
+        if not assessment.should_improve_with_web_search:
             return False
         return self._remaining_answer_seconds(started_at) > 1
 
     def _remaining_answer_seconds(self, started_at: float) -> float:
         return self._settings.max_answer_seconds - (time.perf_counter() - started_at)
+
+    @staticmethod
+    def _apply_confidence_assessment(result: LLMResult) -> ConfidenceAssessment:
+        assessment = assess_confidence(result.text)
+        result.text = assessment.clean_text
+        return assessment
 
     @staticmethod
     def _build_retry_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -164,7 +165,3 @@ class AssistantService:
             messages.append({"role": message.role, "content": message.content})
         messages.append({"role": "user", "content": user_text})
         return messages
-
-
-def is_low_confidence_answer(text: str) -> bool:
-    return any(pattern.search(text) for pattern in LOW_CONFIDENCE_PATTERNS)
