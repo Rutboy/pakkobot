@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Pytest temporary cache fallback
+pytest-cache-files-*/
+
+# Local Pakko runtime data
+data/*.sqlite3
+data/*.sqlite3-*
+
