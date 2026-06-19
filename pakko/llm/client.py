@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "yclid", "mc_cid", "mc_eid", "igshid", "ref"}
 MAX_INLINE_CITATIONS = 5
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)]\((https?://[^\s)]+)\)")
 
 
 @dataclass(slots=True)
@@ -108,10 +110,6 @@ class OpenAIResponsesClient:
 
     @staticmethod
     def _extract_text(response: Any) -> str:
-        output_text = getattr(response, "output_text", None)
-        if output_text:
-            return str(output_text).strip()
-
         chunks: list[str] = []
         for item in getattr(response, "output", []) or []:
             for content in getattr(item, "content", []) or []:
@@ -124,7 +122,13 @@ class OpenAIResponsesClient:
                         list(getattr(content, "annotations", []) or []),
                     )
                 )
-        return "\n".join(chunks).strip()
+        if chunks:
+            return "\n".join(chunks).strip()
+
+        output_text = getattr(response, "output_text", None)
+        if output_text:
+            return str(output_text).strip()
+        return ""
 
     @staticmethod
     def _apply_inline_citations(text: str, annotations: list[Any]) -> str:
@@ -137,15 +141,15 @@ class OpenAIResponsesClient:
         parts: list[str] = []
         cursor = 0
         for annotation in citations:
-            start = int(getattr(annotation, "start_index", -1) or -1)
-            end = int(getattr(annotation, "end_index", -1) or -1)
+            start = int(getattr(annotation, "start_index", -1))
+            end = int(getattr(annotation, "end_index", -1))
             url = normalize_source_url(str(getattr(annotation, "url", "")))
             if not url or start < cursor or end <= start or end > len(text):
                 continue
             parts.append(text[cursor:start])
             label = text[start:end]
             if id(annotation) in selected_ids:
-                parts.append(f"[{label}]({url})")
+                parts.append(f"[{citation_label(label)}]({url})")
             else:
                 parts.append(label)
             cursor = end
@@ -193,3 +197,10 @@ def normalize_source_url(url: str) -> str:
         doseq=True,
     )
     return urlunsplit((split.scheme, split.netloc, split.path, query, ""))
+
+
+def citation_label(label: str) -> str:
+    markdown_link = MARKDOWN_LINK_RE.search(label)
+    if markdown_link:
+        return markdown_link.group(1).strip()
+    return label.strip(" ()[]") or "Источник"

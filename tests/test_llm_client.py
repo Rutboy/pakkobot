@@ -25,8 +25,8 @@ def test_apply_inline_citations_links_annotated_text() -> None:
 
 def test_apply_inline_citations_limits_inline_links() -> None:
     text = "one two three four five six"
-    starts = [0, 4, 8, 14, 19, 24]
     words = ["one", "two", "three", "four", "five", "six"]
+    starts = [text.index(word) for word in words]
     annotations = [
         SimpleNamespace(start_index=start, end_index=start + len(word), url=f"https://example.com/{word}")
         for start, word in zip(starts, words, strict=True)
@@ -37,3 +37,19 @@ def test_apply_inline_citations_limits_inline_links() -> None:
     assert linked.count("](") == 5
     assert "six" in linked
     assert "[six]" not in linked
+
+
+def test_apply_inline_citations_flattens_existing_markdown_link() -> None:
+    text = "Use ([platform.openai.com](https://platform.openai.com/docs?utm_source=openai)) for docs."
+    end_index = text.index(" for docs.")
+    annotations = [
+        SimpleNamespace(
+            start_index=4,
+            end_index=end_index,
+            url="https://platform.openai.com/docs?api-mode=responses&utm_source=openai",
+        )
+    ]
+
+    assert OpenAIResponsesClient._apply_inline_citations(text, annotations) == (
+        "Use [platform.openai.com](https://platform.openai.com/docs?api-mode=responses) for docs."
+    )
