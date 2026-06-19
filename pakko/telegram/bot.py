@@ -13,7 +13,10 @@ from pakko.telegram.handlers import build_router
 async def run_bot(settings: Settings) -> None:
     bot = Bot(
         token=settings.telegram_bot_token.get_secret_value(),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        default=DefaultBotProperties(
+            parse_mode=ParseMode.HTML,
+            link_preview_is_disabled=True,
+        ),
     )
     dispatcher = Dispatcher()
 
