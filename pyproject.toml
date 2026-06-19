@@ -41,3 +41,4 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = ["--basetemp=.pytest-tmp", "-p", "no:cacheprovider"]

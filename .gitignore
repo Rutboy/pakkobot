@@ -219,6 +219,7 @@ __marimo__/
 
 # Pytest temporary cache fallback
 pytest-cache-files-*/
+.pytest-tmp/
 
 # Local Pakko runtime data
 data/*.sqlite3
