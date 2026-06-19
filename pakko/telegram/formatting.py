@@ -1,6 +1,12 @@
+import html
+import re
 from collections.abc import Iterable
 
 TELEGRAM_LIMIT = 4096
+TELEGRAM_HTML_LIMIT = 3900
+
+HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$")
+BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 
 
 def split_for_telegram(text: str, limit: int = TELEGRAM_LIMIT) -> Iterable[str]:
@@ -16,3 +22,25 @@ def split_for_telegram(text: str, limit: int = TELEGRAM_LIMIT) -> Iterable[str]:
             split_at = limit
         yield remaining[:split_at].strip()
         remaining = remaining[split_at:].strip()
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        heading = HEADING_RE.match(raw_line)
+        if heading:
+            title = BOLD_RE.sub(r"\1", heading.group(1))
+            lines.append(f"<b>{html.escape(title, quote=False)}</b>")
+            continue
+        lines.append(_format_inline(raw_line))
+    return "\n".join(lines).strip()
+
+
+def split_markdown_as_telegram_html(text: str) -> Iterable[str]:
+    for chunk in split_for_telegram(text, TELEGRAM_HTML_LIMIT):
+        yield markdown_to_telegram_html(chunk)
+
+
+def _format_inline(text: str) -> str:
+    escaped = html.escape(text, quote=False)
+    return BOLD_RE.sub(r"<b>\1</b>", escaped)

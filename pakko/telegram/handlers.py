@@ -8,7 +8,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from pakko.assistant import AssistantService
 from pakko.config import Settings
 from pakko.memory.repository import SQLiteMemoryRepository
-from pakko.telegram.formatting import split_for_telegram
+from pakko.telegram.formatting import split_markdown_as_telegram_html
 from pakko.telegram.triggers import is_addressed_to_bot, strip_bot_addressing
 
 logger = logging.getLogger(__name__)
@@ -86,10 +86,11 @@ def build_router(
         try:
             async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
                 answer = await assistant.answer(message.chat.id, user_text)
-            for chunk in split_for_telegram(answer):
-                await message.answer(chunk)
+            for chunk in split_markdown_as_telegram_html(answer):
+                await message.answer(chunk, parse_mode="HTML")
         except Exception:
             logger.exception("failed_to_handle_message chat_id=%s", message.chat.id)
             await message.answer("Не удалось обработать запрос. Попробуйте еще раз позже.")
 
     return router
+
