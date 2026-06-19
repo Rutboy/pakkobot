@@ -30,6 +30,10 @@ SEARCH_PATTERNS = [
     r"проверь",
     r"фактчек",
     r"факт[- ]?чекинг",
+    r"релиз",
+    r"анонс",
+    r"дат[а-я]* выход",
+    r"выйд",
 ]
 
 SEARCH_RE = re.compile("|".join(SEARCH_PATTERNS), re.IGNORECASE)

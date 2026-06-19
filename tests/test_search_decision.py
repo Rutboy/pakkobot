@@ -8,3 +8,10 @@ def test_needs_web_search_for_current_data() -> None:
 
 def test_does_not_search_for_general_knowledge() -> None:
     assert not needs_web_search("объясни, что такое бинарный поиск")
+
+
+def test_needs_web_search_for_game_release_dates() -> None:
+    assert needs_web_search(
+        "собери список анонсированных релизов с известной датой, которые выйдут на PC"
+    )
+    assert needs_web_search("какие игры с датой выхода в сентябре 2026")
