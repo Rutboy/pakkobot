@@ -4,7 +4,7 @@ from typing import cast
 from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, ReplyParameters
 from aiogram.utils.chat_action import ChatActionSender
 
 from pakko.assistant import AssistantService
@@ -56,6 +56,13 @@ def _is_reply_to_bot(message: Message, username: str) -> bool:
     )
 
 
+def _reply_parameters_for_group(message: Message) -> ReplyParameters | None:
+    if message.chat.type == "private":
+        return None
+
+    return ReplyParameters(message_id=message.message_id)
+
+
 def build_router(
     settings: Settings,
     assistant: AssistantService,
@@ -103,8 +110,12 @@ def build_router(
             return
 
         user_text = strip_bot_addressing(text, settings.telegram_bot_username)
+        reply_parameters = _reply_parameters_for_group(message)
         if not user_text:
-            await message.answer("Слушаю. Задайте вопрос.")
+            await message.answer(
+                "Слушаю. Задайте вопрос.",
+                reply_parameters=reply_parameters,
+            )
             return
 
         logger.info("user_request chat_id=%s text_length=%s", message.chat.id, len(user_text))
@@ -113,10 +124,17 @@ def build_router(
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
                 answer = await assistant.answer(message.chat.id, user_text)
             for chunk in split_markdown_as_telegram_html(answer):
-                await message.answer(chunk, parse_mode=ParseMode.HTML)
+                await message.answer(
+                    chunk,
+                    parse_mode=ParseMode.HTML,
+                    reply_parameters=reply_parameters,
+                )
         except Exception:
             logger.exception("failed_to_handle_message chat_id=%s", message.chat.id)
-            await message.answer("Не удалось обработать запрос. Попробуйте еще раз позже.")
+            await message.answer(
+                "Не удалось обработать запрос. Попробуйте еще раз позже.",
+                reply_parameters=reply_parameters,
+            )
 
     return router
 
