@@ -19,6 +19,8 @@ from pakko.telegram.triggers import (
 
 logger = logging.getLogger(__name__)
 
+IGNORED_TELEGRAM_USER_IDS = frozenset({6260255228})
+
 START_TEXT = """Пакко помогает искать информацию, проверять факты и собирать краткие исследования.
 
 В личном чате просто отправьте вопрос. В группе обратитесь ко мне через @username, Pakko или Пакко.
@@ -35,6 +37,14 @@ HELP_TEXT = """Команды:
 @pakkkobot найди свежую статистику рынка игр
 pakko расскажи подробнее
 """
+
+
+def _is_not_ignored_user(message: Message) -> bool:
+    user = message.from_user
+    if not user:
+        return True
+
+    return user.id not in IGNORED_TELEGRAM_USER_IDS
 
 
 def _is_reply_to_bot(message: Message, username: str) -> bool:
@@ -81,6 +91,7 @@ def build_router(
     repository: SQLiteMemoryRepository,
 ) -> Router:
     router = Router()
+    router.message.filter(_is_not_ignored_user)
 
     @router.message(Command("start"))
     async def start(message: Message) -> None:

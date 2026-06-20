@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from pakko.telegram.handlers import (
+    _is_not_ignored_user,
     _is_reply_to_bot,
     _reply_context_text,
     _reply_parameters_for_group,
@@ -79,3 +80,21 @@ def test_reply_context_ignores_blank_text() -> None:
     message.reply_to_message.text = "   "
 
     assert _reply_context_text(message) is None
+
+
+def test_ignored_user_is_filtered_out() -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=6260255228))
+
+    assert not _is_not_ignored_user(message)
+
+
+def test_other_user_is_not_filtered_out() -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=100))
+
+    assert _is_not_ignored_user(message)
+
+
+def test_message_without_user_is_not_filtered_out() -> None:
+    message = SimpleNamespace(from_user=None)
+
+    assert _is_not_ignored_user(message)
