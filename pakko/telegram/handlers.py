@@ -1,8 +1,9 @@
 import logging
+from typing import cast
 
-from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
+from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 
@@ -10,7 +11,11 @@ from pakko.assistant import AssistantService
 from pakko.config import Settings
 from pakko.memory.repository import SQLiteMemoryRepository
 from pakko.telegram.formatting import split_markdown_as_telegram_html
-from pakko.telegram.triggers import is_addressed_to_bot, strip_bot_addressing
+from pakko.telegram.triggers import (
+    is_addressed_to_bot,
+    normalize_bot_username,
+    strip_bot_addressing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +35,25 @@ HELP_TEXT = """Команды:
 @pakkkobot найди свежую статистику рынка игр
 pakko расскажи подробнее
 """
+
+
+def _is_reply_to_bot(message: Message, username: str) -> bool:
+    reply = message.reply_to_message
+    if not reply or not reply.from_user:
+        return False
+
+    bot_id = getattr(message.bot, "id", None)
+    if bot_id is not None and reply.from_user.id == bot_id:
+        return True
+
+    reply_username = reply.from_user.username
+    if not reply_username:
+        return False
+
+    return (
+        normalize_bot_username(reply_username).casefold()
+        == normalize_bot_username(username).casefold()
+    )
 
 
 def build_router(
@@ -72,9 +96,9 @@ def build_router(
     @router.message(F.text)
     async def text_message(message: Message) -> None:
         text = message.text or ""
-        if message.chat.type != "private" and not is_addressed_to_bot(
-            text,
-            settings.telegram_bot_username,
+        if message.chat.type != "private" and not (
+            is_addressed_to_bot(text, settings.telegram_bot_username, message.entities)
+            or _is_reply_to_bot(message, settings.telegram_bot_username)
         ):
             return
 
@@ -85,7 +109,8 @@ def build_router(
 
         logger.info("user_request chat_id=%s text_length=%s", message.chat.id, len(user_text))
         try:
-            async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            bot = cast(Bot, message.bot)
+            async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
                 answer = await assistant.answer(message.chat.id, user_text)
             for chunk in split_markdown_as_telegram_html(answer):
                 await message.answer(chunk, parse_mode=ParseMode.HTML)

@@ -1,0 +1,30 @@
+from types import SimpleNamespace
+
+from pakko.telegram.handlers import _is_reply_to_bot
+
+
+def make_message(*, bot_id: int | None, reply_user_id: int, reply_username: str | None = None):
+    return SimpleNamespace(
+        bot=SimpleNamespace(id=bot_id),
+        reply_to_message=SimpleNamespace(
+            from_user=SimpleNamespace(id=reply_user_id, username=reply_username)
+        ),
+    )
+
+
+def test_group_reply_to_bot_by_id_is_addressed() -> None:
+    message = make_message(bot_id=42, reply_user_id=42, reply_username="someone_else")
+
+    assert _is_reply_to_bot(message, "pakkkobot")
+
+
+def test_group_reply_to_bot_by_username_is_addressed_when_bot_id_is_unavailable() -> None:
+    message = make_message(bot_id=None, reply_user_id=42, reply_username="PakKKoBot")
+
+    assert _is_reply_to_bot(message, "@pakkkobot")
+
+
+def test_group_reply_to_other_user_is_not_addressed() -> None:
+    message = make_message(bot_id=42, reply_user_id=100, reply_username="someone_else")
+
+    assert not _is_reply_to_bot(message, "pakkkobot")
