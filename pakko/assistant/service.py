@@ -22,6 +22,7 @@ WEB_SEARCH_RETRY_PROMPT = """Предыдущая попытка ответа п
 Не начинай с технических пояснений о повторной попытке."""
 
 
+
 class AssistantService:
     def __init__(
         self,
@@ -45,7 +46,8 @@ class AssistantService:
             await self._memory.clear_chat(chat_id)
             return "Контекст очищен. Начинаем новый диалог."
 
-        context = await self._memory.load_context(chat_id)
+        loaded_context = await self._memory.load_context_with_status(chat_id)
+        context = loaded_context.context
         current_user_prompt = self._build_current_user_prompt(user_text, reply_context)
         use_web_search = self._settings.enable_web_search and needs_web_search(current_user_prompt)
         messages = self._build_messages(current_user_prompt, context.summary, context.messages)
@@ -80,7 +82,8 @@ class AssistantService:
                 "assistant_response chat_id=%s web_search_requested=%s web_search_retry=%s "
                 "web_search_used=%s confidence_level=%s source_reliability=%s "
                 "web_needed=%s confidence_marker_found=%s timed_out=%s sources=%s model=%s "
-                "tokens_in=%s tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s"
+                "tokens_in=%s tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s "
+                "context_reset_due_to_inactivity=%s"
             ),
             chat_id,
             use_web_search,
@@ -98,6 +101,7 @@ class AssistantService:
             result.usage.total_tokens,
             result.usage.estimated_cost_usd,
             elapsed_ms,
+            loaded_context.reset_due_to_inactivity,
         )
         return response_text[: self._settings.max_response_chars].strip()
 

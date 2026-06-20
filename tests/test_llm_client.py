@@ -13,8 +13,16 @@ def test_normalize_source_url_removes_tracking_params() -> None:
 def test_apply_inline_citations_links_annotated_text() -> None:
     text = "See Steam and PlayStation for details."
     annotations = [
-        SimpleNamespace(start_index=4, end_index=9, url="https://store.steampowered.com/?utm_source=x"),
-        SimpleNamespace(start_index=14, end_index=25, url="https://store.playstation.com/en-us/product/123"),
+        SimpleNamespace(
+            start_index=4,
+            end_index=9,
+            url="https://store.steampowered.com/?utm_source=x",
+        ),
+        SimpleNamespace(
+            start_index=14,
+            end_index=25,
+            url="https://store.playstation.com/en-us/product/123",
+        ),
     ]
 
     assert OpenAIResponsesClient._apply_inline_citations(text, annotations) == (
@@ -28,7 +36,11 @@ def test_apply_inline_citations_limits_inline_links() -> None:
     words = ["one", "two", "three", "four", "five", "six"]
     starts = [text.index(word) for word in words]
     annotations = [
-        SimpleNamespace(start_index=start, end_index=start + len(word), url=f"https://example.com/{word}")
+        SimpleNamespace(
+            start_index=start,
+            end_index=start + len(word),
+            url=f"https://example.com/{word}",
+        )
         for start, word in zip(starts, words, strict=True)
     ]
 
@@ -40,7 +52,10 @@ def test_apply_inline_citations_limits_inline_links() -> None:
 
 
 def test_apply_inline_citations_flattens_existing_markdown_link() -> None:
-    text = "Use ([platform.openai.com](https://platform.openai.com/docs?utm_source=openai)) for docs."
+    text = (
+        "Use ([platform.openai.com](https://platform.openai.com/docs?utm_source=openai)) "
+        "for docs."
+    )
     end_index = text.index(" for docs.")
     annotations = [
         SimpleNamespace(

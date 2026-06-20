@@ -1,6 +1,8 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from pakko.telegram.handlers import (
+    _format_last_activity,
     _is_not_ignored_user,
     _is_reply_to_bot,
     _reply_context_text,
@@ -98,3 +100,9 @@ def test_message_without_user_is_not_filtered_out() -> None:
     message = SimpleNamespace(from_user=None)
 
     assert _is_not_ignored_user(message)
+
+
+def test_format_last_activity_uses_human_readable_relative_time() -> None:
+    value = datetime.now(UTC) - timedelta(minutes=5)
+
+    assert _format_last_activity(value) == "5 минут назад"

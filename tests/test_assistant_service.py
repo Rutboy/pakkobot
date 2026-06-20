@@ -5,12 +5,14 @@ from types import SimpleNamespace
 from pakko.assistant.service import AssistantService
 from pakko.llm.client import LLMResult, LLMUsage
 from pakko.memory.repository import ChatContext
+from pakko.memory.service import LoadedContext
 
 
 class FakeMemory:
     def __init__(self) -> None:
         self.exchanges: list[tuple[int, str, str]] = []
         self.cleared_chat_id: int | None = None
+        self.reset_due_to_inactivity = False
 
     @staticmethod
     def is_clear_intent(text: str) -> bool:
@@ -25,6 +27,12 @@ class FakeMemory:
             summary=None,
             last_activity_at=datetime.now(UTC),
             messages=[],
+        )
+
+    async def load_context_with_status(self, chat_id: int) -> LoadedContext:
+        return LoadedContext(
+            context=await self.load_context(chat_id),
+            reset_due_to_inactivity=self.reset_due_to_inactivity,
         )
 
     async def append_exchange(self, chat_id: int, user_text: str, assistant_text: str) -> None:
@@ -243,3 +251,15 @@ async def test_answer_includes_reply_context_in_current_prompt() -> None:
     assert "quoted detail" in current_prompt
     assert "Current user request:\nwhat does this mean?" in current_prompt
     assert memory.exchanges == [(123, "what does this mean?", "Answer")]
+
+
+async def test_answer_keeps_ttl_context_reset_silent_for_user() -> None:
+    memory = FakeMemory()
+    memory.reset_due_to_inactivity = True
+    llm = FakeLLM([make_result("Новый ответ")])
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "продолжим")
+
+    assert answer == "Новый ответ"
+    assert memory.exchanges == [(123, "продолжим", "Новый ответ")]
