@@ -35,14 +35,20 @@ class AssistantService:
         self._llm = llm
         self._summarization = summarization
 
-    async def answer(self, chat_id: int, user_text: str) -> str:
+    async def answer(
+        self,
+        chat_id: int,
+        user_text: str,
+        reply_context: str | None = None,
+    ) -> str:
         if self._memory.is_clear_intent(user_text):
             await self._memory.clear_chat(chat_id)
             return "Контекст очищен. Начинаем новый диалог."
 
         context = await self._memory.load_context(chat_id)
-        use_web_search = self._settings.enable_web_search and needs_web_search(user_text)
-        messages = self._build_messages(user_text, context.summary, context.messages)
+        current_user_prompt = self._build_current_user_prompt(user_text, reply_context)
+        use_web_search = self._settings.enable_web_search and needs_web_search(current_user_prompt)
+        messages = self._build_messages(current_user_prompt, context.summary, context.messages)
 
         started_at = time.perf_counter()
         web_search_retry = False
@@ -130,6 +136,17 @@ class AssistantService:
         assessment = assess_confidence(result.text)
         result.text = assessment.clean_text
         return assessment
+
+    @staticmethod
+    def _build_current_user_prompt(user_text: str, reply_context: str | None) -> str:
+        if not reply_context:
+            return user_text
+        return (
+            "Context from the Telegram message this request replies to:\n"
+            f"{reply_context.strip()}\n\n"
+            "Current user request:\n"
+            f"{user_text}"
+        )
 
     @staticmethod
     def _build_retry_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:

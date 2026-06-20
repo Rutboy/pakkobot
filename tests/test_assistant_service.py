@@ -137,9 +137,9 @@ async def test_answer_does_not_retry_when_first_answer_is_confident() -> None:
 
 async def test_answer_does_not_retry_for_medium_confidence_with_reliable_source() -> None:
     memory = FakeMemory()
-    llm = FakeLLM([
-        make_result("Скорее всего, это X.", level="medium", source="reliable", web_needed="no")
-    ])
+    llm = FakeLLM(
+        [make_result("Скорее всего, это X.", level="medium", source="reliable", web_needed="no")]
+    )
     assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
 
     answer = await assistant.answer(123, "объясни редкий термин frobnicator")
@@ -166,9 +166,9 @@ async def test_answer_retries_when_marker_requests_web_check() -> None:
 
 async def test_answer_does_not_retry_after_heuristic_web_search() -> None:
     memory = FakeMemory()
-    llm = FakeLLM([
-        make_result("Источники расходятся.", level="low", source="mixed", web_search_used=True)
-    ])
+    llm = FakeLLM(
+        [make_result("Источники расходятся.", level="low", source="mixed", web_search_used=True)]
+    )
     assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
 
     answer = await assistant.answer(123, "найди свежие данные")
@@ -228,3 +228,18 @@ async def test_answer_keeps_initial_result_when_web_search_retry_times_out() -> 
     assert answer == "Вероятно, это X."
     assert [use_web_search for _, use_web_search in llm.calls] == [False, True]
     assert memory.exchanges == [(123, "объясни редкий термин frobnicator", answer)]
+
+
+async def test_answer_includes_reply_context_in_current_prompt() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM([make_result("Answer")])
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "what does this mean?", reply_context="quoted detail")
+
+    assert answer == "Answer"
+    current_prompt = llm.calls[0][0][-1]["content"]
+    assert "Context from the Telegram message this request replies to:" in current_prompt
+    assert "quoted detail" in current_prompt
+    assert "Current user request:\nwhat does this mean?" in current_prompt
+    assert memory.exchanges == [(123, "what does this mean?", "Answer")]

@@ -63,6 +63,18 @@ def _reply_parameters_for_group(message: Message) -> ReplyParameters | None:
     return ReplyParameters(message_id=message.message_id)
 
 
+def _reply_context_text(message: Message) -> str | None:
+    reply = message.reply_to_message
+    if not reply:
+        return None
+
+    text = getattr(reply, "text", None) or getattr(reply, "caption", None)
+    if not text:
+        return None
+
+    return text.strip() or None
+
+
 def build_router(
     settings: Settings,
     assistant: AssistantService,
@@ -122,7 +134,11 @@ def build_router(
         try:
             bot = cast(Bot, message.bot)
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
-                answer = await assistant.answer(message.chat.id, user_text)
+                answer = await assistant.answer(
+                    message.chat.id,
+                    user_text,
+                    reply_context=_reply_context_text(message),
+                )
             for chunk in split_markdown_as_telegram_html(answer):
                 await message.answer(
                     chunk,
@@ -137,4 +153,3 @@ def build_router(
             )
 
     return router
-

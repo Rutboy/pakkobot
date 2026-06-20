@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from pakko.telegram.handlers import _is_reply_to_bot, _reply_parameters_for_group
+from pakko.telegram.handlers import (
+    _is_reply_to_bot,
+    _reply_context_text,
+    _reply_parameters_for_group,
+)
 
 
 def make_message(
@@ -16,7 +20,9 @@ def make_message(
         chat=SimpleNamespace(type=chat_type),
         message_id=message_id,
         reply_to_message=SimpleNamespace(
-            from_user=SimpleNamespace(id=reply_user_id, username=reply_username)
+            from_user=SimpleNamespace(id=reply_user_id, username=reply_username),
+            text="original message",
+            caption=None,
         ),
     )
 
@@ -52,3 +58,24 @@ def test_private_answer_does_not_force_reply() -> None:
     message = make_message(bot_id=42, reply_user_id=100, chat_type="private", message_id=321)
 
     assert _reply_parameters_for_group(message) is None
+
+
+def test_reply_context_uses_replied_text() -> None:
+    message = make_message(bot_id=42, reply_user_id=100)
+
+    assert _reply_context_text(message) == "original message"
+
+
+def test_reply_context_falls_back_to_caption() -> None:
+    message = make_message(bot_id=42, reply_user_id=100)
+    message.reply_to_message.text = None
+    message.reply_to_message.caption = "caption text"
+
+    assert _reply_context_text(message) == "caption text"
+
+
+def test_reply_context_ignores_blank_text() -> None:
+    message = make_message(bot_id=42, reply_user_id=100)
+    message.reply_to_message.text = "   "
+
+    assert _reply_context_text(message) is None
