@@ -109,133 +109,95 @@ def make_result(
     )
 
 
-async def test_answer_retries_with_web_search_after_low_confidence_marker() -> None:
+async def test_answer_uses_web_search_first_for_low_confidence_marker() -> None:
     memory = FakeMemory()
-    llm = FakeLLM(
-        [
-            make_result("Вероятно, это X.", level="low", source="weak", web_needed="yes"),
-            make_result("После проверки: это X.", web_search_used=True),
-        ]
-    )
+    llm = FakeLLM([make_result("Probably X.", level="low", source="weak", web_needed="yes")])
     summarization = FakeSummarization()
     assistant = AssistantService(make_settings(), memory, llm, summarization)  # type: ignore[arg-type]
 
-    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
+    answer = await assistant.answer(123, "explain rare term frobnicator")
 
-    assert answer == "После проверки: это X."
-    assert [use_web_search for _, use_web_search in llm.calls] == [False, True]
-    assert "Предыдущая попытка ответа" in llm.calls[1][0][-2]["content"]
-    assert memory.exchanges == [
-        (123, "объясни редкий термин frobnicator", "После проверки: это X.")
-    ]
+    assert answer == "Probably X."
+    assert [use_web_search for _, use_web_search in llm.calls] == [True]
+    assert memory.exchanges == [(123, "explain rare term frobnicator", "Probably X.")]
     assert summarization.calls == [123]
 
 
-async def test_answer_does_not_retry_when_first_answer_is_confident() -> None:
+async def test_answer_uses_web_search_first_when_answer_is_confident() -> None:
     memory = FakeMemory()
-    llm = FakeLLM([make_result("Это X.")])
+    llm = FakeLLM([make_result("It is X.")])
     assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
 
-    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
+    answer = await assistant.answer(123, "explain rare term frobnicator")
 
-    assert answer == "Это X."
-    assert [use_web_search for _, use_web_search in llm.calls] == [False]
+    assert answer == "It is X."
+    assert [use_web_search for _, use_web_search in llm.calls] == [True]
     assert "pakko_confidence" not in answer
 
 
 async def test_answer_does_not_retry_for_medium_confidence_with_reliable_source() -> None:
     memory = FakeMemory()
-    llm = FakeLLM(
-        [make_result("Скорее всего, это X.", level="medium", source="reliable", web_needed="no")]
-    )
+    llm = FakeLLM([
+        make_result("Most likely X.", level="medium", source="reliable", web_needed="no")
+    ])
     assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
 
-    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
+    answer = await assistant.answer(123, "explain rare term frobnicator")
 
-    assert answer == "Скорее всего, это X."
-    assert [use_web_search for _, use_web_search in llm.calls] == [False]
-
-
-async def test_answer_retries_when_marker_requests_web_check() -> None:
-    memory = FakeMemory()
-    llm = FakeLLM(
-        [
-            make_result("Похоже на X.", level="medium", source="mixed", web_needed="yes"),
-            make_result("После проверки: это X.", web_search_used=True),
-        ]
-    )
-    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
-
-    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
-
-    assert answer == "После проверки: это X."
-    assert [use_web_search for _, use_web_search in llm.calls] == [False, True]
-
-
-async def test_answer_does_not_retry_after_heuristic_web_search() -> None:
-    memory = FakeMemory()
-    llm = FakeLLM(
-        [make_result("Источники расходятся.", level="low", source="mixed", web_search_used=True)]
-    )
-    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
-
-    answer = await assistant.answer(123, "найди свежие данные")
-
-    assert answer == "Источники расходятся."
+    assert answer == "Most likely X."
     assert [use_web_search for _, use_web_search in llm.calls] == [True]
 
 
-async def test_answer_retries_when_marker_is_missing() -> None:
+async def test_answer_does_not_retry_when_marker_requests_web_check_after_search_first() -> None:
     memory = FakeMemory()
-    llm = FakeLLM(
-        [
-            make_result("Ответ без маркера.", include_marker=False),
-            make_result("После проверки: это X.", web_search_used=True),
-        ]
-    )
+    llm = FakeLLM([make_result("Looks like X.", level="medium", source="mixed", web_needed="yes")])
     assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
 
-    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
+    answer = await assistant.answer(123, "explain rare term frobnicator")
 
-    assert answer == "После проверки: это X."
-    assert [use_web_search for _, use_web_search in llm.calls] == [False, True]
+    assert answer == "Looks like X."
+    assert [use_web_search for _, use_web_search in llm.calls] == [True]
 
 
-async def test_answer_returns_initial_result_when_improvement_budget_is_spent() -> None:
+async def test_answer_uses_web_search_for_current_data() -> None:
     memory = FakeMemory()
-    llm = FakeLLM(
-        [make_result("Пока могу сказать только X.", level="low", source="weak", web_needed="yes")],
-        delay_seconds=0.02,
-    )
+    llm = FakeLLM([
+        make_result("Sources disagree.", level="low", source="mixed", web_search_used=True)
+    ])
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "find fresh data")
+
+    assert answer == "Sources disagree."
+    assert [use_web_search for _, use_web_search in llm.calls] == [True]
+
+
+async def test_answer_does_not_retry_when_marker_is_missing_after_search_first() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM([make_result("Answer without marker.", include_marker=False)])
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "explain rare term frobnicator")
+
+    assert answer == "Answer without marker."
+    assert [use_web_search for _, use_web_search in llm.calls] == [True]
+
+
+
+async def test_answer_respects_disabled_web_search_setting() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM([make_result("Offline answer.", level="low", source="weak", web_needed="yes")])
     assistant = AssistantService(
-        make_settings(max_answer_seconds=0.001),
+        make_settings(enable_web_search=False),
         memory,
         llm,
         FakeSummarization(),
     )  # type: ignore[arg-type]
 
-    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
+    answer = await assistant.answer(123, "explain rare term frobnicator")
 
-    assert answer == "Пока могу сказать только X."
+    assert answer == "Offline answer."
     assert [use_web_search for _, use_web_search in llm.calls] == [False]
-    assert memory.exchanges == [(123, "объясни редкий термин frobnicator", answer)]
-
-
-async def test_answer_keeps_initial_result_when_web_search_retry_times_out() -> None:
-    memory = FakeMemory()
-    llm = FakeLLM(
-        [
-            make_result("Вероятно, это X.", level="low", source="weak", web_needed="yes"),
-            TimeoutError(),
-        ]
-    )
-    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
-
-    answer = await assistant.answer(123, "объясни редкий термин frobnicator")
-
-    assert answer == "Вероятно, это X."
-    assert [use_web_search for _, use_web_search in llm.calls] == [False, True]
-    assert memory.exchanges == [(123, "объясни редкий термин frobnicator", answer)]
 
 
 async def test_answer_includes_reply_context_in_current_prompt() -> None:
@@ -246,6 +208,7 @@ async def test_answer_includes_reply_context_in_current_prompt() -> None:
     answer = await assistant.answer(123, "what does this mean?", reply_context="quoted detail")
 
     assert answer == "Answer"
+    assert [use_web_search for _, use_web_search in llm.calls] == [True]
     current_prompt = llm.calls[0][0][-1]["content"]
     assert "Context from the Telegram message this request replies to:" in current_prompt
     assert "quoted detail" in current_prompt
@@ -256,10 +219,11 @@ async def test_answer_includes_reply_context_in_current_prompt() -> None:
 async def test_answer_keeps_ttl_context_reset_silent_for_user() -> None:
     memory = FakeMemory()
     memory.reset_due_to_inactivity = True
-    llm = FakeLLM([make_result("Новый ответ")])
+    llm = FakeLLM([make_result("New answer")])
     assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
 
-    answer = await assistant.answer(123, "продолжим")
+    answer = await assistant.answer(123, "continue")
 
-    assert answer == "Новый ответ"
-    assert memory.exchanges == [(123, "продолжим", "Новый ответ")]
+    assert answer == "New answer"
+    assert [use_web_search for _, use_web_search in llm.calls] == [True]
+    assert memory.exchanges == [(123, "continue", "New answer")]

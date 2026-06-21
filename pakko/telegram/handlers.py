@@ -64,6 +64,9 @@ def _is_not_ignored_user(message: Message) -> bool:
     if not user:
         return True
 
+    if getattr(user, "is_bot", False):
+        return False
+
     return user.id not in IGNORED_TELEGRAM_USER_IDS
 
 

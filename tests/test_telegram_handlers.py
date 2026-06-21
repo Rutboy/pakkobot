@@ -85,13 +85,19 @@ def test_reply_context_ignores_blank_text() -> None:
 
 
 def test_ignored_user_is_filtered_out() -> None:
-    message = SimpleNamespace(from_user=SimpleNamespace(id=6260255228))
+    message = SimpleNamespace(from_user=SimpleNamespace(id=6260255228, is_bot=False))
+
+    assert not _is_not_ignored_user(message)
+
+
+def test_bot_user_is_filtered_out() -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=100, is_bot=True))
 
     assert not _is_not_ignored_user(message)
 
 
 def test_other_user_is_not_filtered_out() -> None:
-    message = SimpleNamespace(from_user=SimpleNamespace(id=100))
+    message = SimpleNamespace(from_user=SimpleNamespace(id=100, is_bot=False))
 
     assert _is_not_ignored_user(message)
 
