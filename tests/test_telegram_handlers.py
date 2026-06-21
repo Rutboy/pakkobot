@@ -2,9 +2,12 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from pakko.telegram.handlers import (
+    _attachment_too_large,
     _format_last_activity,
+    _has_supported_input,
     _is_not_ignored_user,
     _is_reply_to_bot,
+    _message_text,
     _reply_context_text,
     _reply_parameters_for_group,
 )
@@ -112,3 +115,23 @@ def test_format_last_activity_uses_human_readable_relative_time() -> None:
     value = datetime.now(UTC) - timedelta(minutes=5)
 
     assert _format_last_activity(value) == "5 минут назад"
+
+
+def test_message_text_uses_caption_when_text_is_missing() -> None:
+    message = SimpleNamespace(text=None, caption="  caption question  ")
+
+    assert _message_text(message) == "caption question"
+
+
+def test_supported_input_accepts_photo_without_text() -> None:
+    message = SimpleNamespace(text=None, caption=None, photo=[object()], document=None)
+
+    assert _has_supported_input(message)
+
+
+def test_attachment_too_large_uses_configured_limit() -> None:
+    settings = SimpleNamespace(max_input_file_bytes=10)
+
+    assert _attachment_too_large(11, settings)
+    assert not _attachment_too_large(10, settings)
+    assert not _attachment_too_large(None, settings)

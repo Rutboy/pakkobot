@@ -2,10 +2,11 @@ import asyncio
 import logging
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 from pakko.assistant.confidence import ConfidenceAssessment, assess_confidence
 from pakko.config import Settings
-from pakko.llm.client import LLMResult, OpenAIResponsesClient
+from pakko.llm.client import LLMInputAttachment, LLMResult, OpenAIResponsesClient
 from pakko.llm.prompts import SYSTEM_PROMPT
 from pakko.memory.repository import MessageRecord
 from pakko.memory.service import MemoryService
@@ -41,6 +42,7 @@ class AssistantService:
         chat_id: int,
         user_text: str,
         reply_context: str | None = None,
+        attachments: list[LLMInputAttachment] | None = None,
     ) -> str:
         if self._memory.is_clear_intent(user_text):
             await self._memory.clear_chat(chat_id)
@@ -48,9 +50,15 @@ class AssistantService:
 
         loaded_context = await self._memory.load_context_with_status(chat_id)
         context = loaded_context.context
+        input_attachments = attachments or []
         current_user_prompt = self._build_current_user_prompt(user_text, reply_context)
         use_web_search = self._settings.enable_web_search and needs_web_search(current_user_prompt)
-        messages = self._build_messages(current_user_prompt, context.summary, context.messages)
+        messages = self._build_messages(
+            current_user_prompt,
+            context.summary,
+            context.messages,
+            attachments=input_attachments,
+        )
 
         started_at = time.perf_counter()
         web_search_retry = False
@@ -74,7 +82,11 @@ class AssistantService:
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
 
         response_text = result.text
-        await self._memory.append_exchange(chat_id, user_text, response_text)
+        await self._memory.append_exchange(
+            chat_id,
+            self._memory_user_text(user_text, input_attachments),
+            response_text,
+        )
         await self._summarization.summarize_if_needed(chat_id)
 
         logger.info(
@@ -83,7 +95,7 @@ class AssistantService:
                 "web_search_used=%s confidence_level=%s source_reliability=%s "
                 "web_needed=%s confidence_marker_found=%s timed_out=%s sources=%s model=%s "
                 "tokens_in=%s tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s "
-                "context_reset_due_to_inactivity=%s"
+                "context_reset_due_to_inactivity=%s attachments=%s"
             ),
             chat_id,
             use_web_search,
@@ -102,12 +114,13 @@ class AssistantService:
             result.usage.estimated_cost_usd,
             elapsed_ms,
             loaded_context.reset_due_to_inactivity,
+            len(input_attachments),
         )
         return response_text[: self._settings.max_response_chars].strip()
 
     async def _create_response_with_improvement_budget(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         use_web_search: bool,
         started_at: float,
@@ -153,7 +166,7 @@ class AssistantService:
         )
 
     @staticmethod
-    def _build_retry_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    def _build_retry_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not messages:
             return [{"role": "developer", "content": WEB_SEARCH_RETRY_PROMPT}]
         return [
@@ -167,9 +180,11 @@ class AssistantService:
         user_text: str,
         summary: str | None,
         recent_messages: list[MessageRecord],
-    ) -> list[dict[str, str]]:
+        *,
+        attachments: list[LLMInputAttachment] | None = None,
+    ) -> list[dict[str, Any]]:
         today = datetime.now(UTC).date().isoformat()
-        messages: list[dict[str, str]] = [
+        messages: list[dict[str, Any]] = [
             {
                 "role": "developer",
                 "content": f"{SYSTEM_PROMPT}\nТекущая дата UTC: {today}.",
@@ -184,5 +199,28 @@ class AssistantService:
             )
         for message in recent_messages:
             messages.append({"role": message.role, "content": message.content})
-        messages.append({"role": "user", "content": user_text})
+        messages.append({
+            "role": "user",
+            "content": self._build_user_content(user_text, attachments or []),
+        })
         return messages
+
+    @staticmethod
+    def _build_user_content(
+        user_text: str,
+        attachments: list[LLMInputAttachment],
+    ) -> str | list[dict[str, str]]:
+        if not attachments:
+            return user_text
+        return [
+            {"type": "input_text", "text": user_text},
+            *(attachment.to_content_item() for attachment in attachments),
+        ]
+
+    @staticmethod
+    def _memory_user_text(user_text: str, attachments: list[LLMInputAttachment]) -> str:
+        if not attachments:
+            return user_text
+        names = ", ".join(attachment.filename for attachment in attachments)
+        return f"{user_text}\n\n[Attachments: {names}]"
+

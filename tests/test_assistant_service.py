@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from pakko.assistant.service import AssistantService
-from pakko.llm.client import LLMResult, LLMUsage
+from pakko.llm.client import LLMInputAttachment, LLMResult, LLMUsage
 from pakko.memory.repository import ChatContext
 from pakko.memory.service import LoadedContext
 
@@ -43,11 +43,11 @@ class FakeLLM:
     def __init__(self, results: list[LLMResult | BaseException], delay_seconds: float = 0) -> None:
         self.results = results
         self.delay_seconds = delay_seconds
-        self.calls: list[tuple[list[dict[str, str]], bool]] = []
+        self.calls: list[tuple[list[dict[str, object]], bool]] = []
 
     async def create_response(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         *,
         use_web_search: bool,
     ) -> LLMResult:
@@ -227,3 +227,26 @@ async def test_answer_keeps_ttl_context_reset_silent_for_user() -> None:
     assert answer == "New answer"
     assert [use_web_search for _, use_web_search in llm.calls] == [True]
     assert memory.exchanges == [(123, "continue", "New answer")]
+
+
+async def test_answer_passes_attachments_to_last_user_message_without_storing_bytes() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM([make_result("Image answer")])
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+    attachment = LLMInputAttachment(
+        filename="photo.jpg",
+        mime_type="image/jpeg",
+        data=b"image-bytes",
+    )
+
+    answer = await assistant.answer(123, "what is shown?", attachments=[attachment])
+
+    assert answer == "Image answer"
+    content = llm.calls[0][0][-1]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "input_text", "text": "what is shown?"}
+    assert content[1] == {
+        "type": "input_image",
+        "image_url": "data:image/jpeg;base64,aW1hZ2UtYnl0ZXM=",
+    }
+    assert memory.exchanges == [(123, "what is shown?\n\n[Attachments: photo.jpg]", "Image answer")]

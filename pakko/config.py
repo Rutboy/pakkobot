@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     max_recent_messages: int = Field(default=8, ge=2, alias="MAX_RECENT_MESSAGES")
     summarize_after_messages: int = Field(default=16, ge=4, alias="SUMMARIZE_AFTER_MESSAGES")
     max_response_chars: int = Field(default=3500, ge=500, alias="MAX_RESPONSE_CHARS")
+    max_input_file_bytes: int = Field(
+        default=20_000_000,
+        ge=1_000_000,
+        alias="MAX_INPUT_FILE_BYTES",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

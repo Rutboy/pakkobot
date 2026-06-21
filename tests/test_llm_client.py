@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from pakko.llm.client import OpenAIResponsesClient, normalize_source_url
+from pakko.llm.client import LLMInputAttachment, OpenAIResponsesClient, normalize_source_url
 
 
 def test_normalize_source_url_removes_tracking_params() -> None:
@@ -68,3 +68,29 @@ def test_apply_inline_citations_flattens_existing_markdown_link() -> None:
     assert OpenAIResponsesClient._apply_inline_citations(text, annotations) == (
         "Use [platform.openai.com](https://platform.openai.com/docs?api-mode=responses) for docs."
     )
+
+def test_input_attachment_builds_image_content_item() -> None:
+    attachment = LLMInputAttachment(
+        filename="photo.jpg",
+        mime_type="image/jpeg",
+        data=b"image-bytes",
+    )
+
+    assert attachment.to_content_item() == {
+        "type": "input_image",
+        "image_url": "data:image/jpeg;base64,aW1hZ2UtYnl0ZXM=",
+    }
+
+
+def test_input_attachment_builds_file_content_item() -> None:
+    attachment = LLMInputAttachment(
+        filename="report.pdf",
+        mime_type="application/pdf",
+        data=b"pdf-bytes",
+    )
+
+    assert attachment.to_content_item() == {
+        "type": "input_file",
+        "filename": "report.pdf",
+        "file_data": "data:application/pdf;base64,cGRmLWJ5dGVz",
+    }

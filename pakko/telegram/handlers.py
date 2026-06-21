@@ -1,8 +1,10 @@
 import logging
+import mimetypes
 from datetime import UTC, datetime
+from io import BytesIO
 from typing import cast
 
-from aiogram import Bot, F, Router
+from aiogram import Bot, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
@@ -11,6 +13,7 @@ from aiogram.utils.chat_action import ChatActionSender
 
 from pakko.assistant import AssistantService
 from pakko.config import Settings
+from pakko.llm.client import LLMInputAttachment
 from pakko.memory.repository import SQLiteMemoryRepository
 from pakko.search import needs_web_search
 from pakko.telegram.formatting import split_markdown_as_telegram_html
@@ -57,6 +60,7 @@ UNSUPPORTED_MESSAGE_TEXT = (
 )
 
 SEARCH_STATUS_TEXT = "Ищу и проверяю источники..."
+DEFAULT_ATTACHMENT_PROMPT = "Проанализируй вложение и ответь на основе его содержимого."
 
 
 def _is_not_ignored_user(message: Message) -> bool:
@@ -106,6 +110,86 @@ def _reply_context_text(message: Message) -> str | None:
         return None
 
     return text.strip() or None
+
+
+def _message_text(message: Message) -> str:
+    return (message.text or message.caption or "").strip()
+
+
+def _message_entities(message: Message) -> object:
+    if message.text is not None:
+        return message.entities
+    return message.caption_entities
+
+
+def _has_supported_input(message: Message) -> bool:
+    return bool(message.text or message.caption or message.photo or message.document)
+
+
+def _attachment_too_large(file_size: int | None, settings: Settings) -> bool:
+    return file_size is not None and file_size > settings.max_input_file_bytes
+
+
+async def _download_file_bytes(bot: Bot, file_id: str) -> bytes:
+    telegram_file = await bot.get_file(file_id)
+    if not telegram_file.file_path:
+        raise ValueError("Telegram file_path is empty")
+
+    buffer = BytesIO()
+    await bot.download_file(telegram_file.file_path, destination=buffer)
+    return buffer.getvalue()
+
+
+async def _collect_input_attachments(
+    message: Message,
+    settings: Settings,
+) -> tuple[list[LLMInputAttachment], list[str]]:
+    attachments: list[LLMInputAttachment] = []
+    rejected: list[str] = []
+    bot = cast(Bot, message.bot)
+
+    photos = list(message.photo or [])
+    if photos:
+        photo = max(photos, key=lambda item: ((item.file_size or 0), item.width * item.height))
+        if _attachment_too_large(photo.file_size, settings):
+            rejected.append("image")
+        else:
+            data = await _download_file_bytes(bot, photo.file_id)
+            if len(data) > settings.max_input_file_bytes:
+                rejected.append("image")
+            else:
+                attachments.append(
+                    LLMInputAttachment(
+                        filename=f"telegram-photo-{photo.file_unique_id}.jpg",
+                        mime_type="image/jpeg",
+                        data=data,
+                    )
+                )
+
+    document = message.document
+    if document:
+        filename = document.file_name or f"telegram-file-{document.file_unique_id}"
+        mime_type = (
+            document.mime_type
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream"
+        )
+        if _attachment_too_large(document.file_size, settings):
+            rejected.append(filename)
+        else:
+            data = await _download_file_bytes(bot, document.file_id)
+            if len(data) > settings.max_input_file_bytes:
+                rejected.append(filename)
+            else:
+                attachments.append(
+                    LLMInputAttachment(
+                        filename=filename,
+                        mime_type=mime_type,
+                        data=data,
+                    )
+                )
+
+    return attachments, rejected
 
 
 def _format_last_activity(value: datetime | None) -> str:
@@ -199,17 +283,53 @@ def build_router(
             )
         )
 
-    @router.message(F.text)
-    async def text_message(message: Message) -> None:
-        text = message.text or ""
+    @router.message(_has_supported_input)
+    async def supported_message(message: Message) -> None:
+        text = _message_text(message)
         if message.chat.type != "private" and not (
-            is_addressed_to_bot(text, settings.telegram_bot_username, message.entities)
+            is_addressed_to_bot(
+                text,
+                settings.telegram_bot_username,
+                _message_entities(message),
+            )
             or _is_reply_to_bot(message, settings.telegram_bot_username)
         ):
             return
 
-        user_text = strip_bot_addressing(text, settings.telegram_bot_username)
+        user_text = strip_bot_addressing(text, settings.telegram_bot_username).strip()
         reply_parameters = _reply_parameters_for_group(message)
+        try:
+            attachments, rejected_attachments = await _collect_input_attachments(message, settings)
+        except Exception:
+            logger.exception("failed_to_download_attachment chat_id=%s", message.chat.id)
+            await message.answer(
+                "Не удалось скачать вложение из Telegram. Попробуйте отправить его еще раз.",
+                reply_parameters=reply_parameters,
+            )
+            return
+
+        if rejected_attachments and not attachments:
+            await message.answer(
+                (
+                    "Вложение слишком большое. "
+                    f"Лимит: {settings.max_input_file_bytes // 1_000_000} МБ."
+                ),
+                reply_parameters=reply_parameters,
+            )
+            return
+
+        if rejected_attachments:
+            await message.answer(
+                (
+                    "Часть вложений пропущена из-за размера. "
+                    f"Лимит: {settings.max_input_file_bytes // 1_000_000} МБ."
+                ),
+                reply_parameters=reply_parameters,
+            )
+
+        if not user_text and attachments:
+            user_text = DEFAULT_ATTACHMENT_PROMPT
+
         if not user_text:
             await message.answer(
                 "Слушаю. Задайте вопрос.",
@@ -225,7 +345,12 @@ def build_router(
                 reply_parameters=reply_parameters,
             )
 
-        logger.info("user_request chat_id=%s text_length=%s", message.chat.id, len(user_text))
+        logger.info(
+            "user_request chat_id=%s text_length=%s attachments=%s",
+            message.chat.id,
+            len(user_text),
+            len(attachments),
+        )
         try:
             bot = cast(Bot, message.bot)
             async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
@@ -233,6 +358,7 @@ def build_router(
                     message.chat.id,
                     user_text,
                     reply_context=reply_context,
+                    attachments=attachments,
                 )
             await _delete_message_safely(status_message)
             for chunk in split_markdown_as_telegram_html(answer):

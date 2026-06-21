@@ -1,5 +1,6 @@
 import logging
 import re
+from base64 import b64encode
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -33,6 +34,28 @@ class LLMResult:
     web_search_used: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class LLMInputAttachment:
+    filename: str
+    mime_type: str
+    data: bytes
+
+    @property
+    def is_image(self) -> bool:
+        return self.mime_type.startswith("image/")
+
+    def to_content_item(self) -> dict[str, str]:
+        encoded = b64encode(self.data).decode("ascii")
+        data_url = f"data:{self.mime_type};base64,{encoded}"
+        if self.is_image:
+            return {"type": "input_image", "image_url": data_url}
+        return {
+            "type": "input_file",
+            "filename": self.filename,
+            "file_data": data_url,
+        }
+
+
 class OpenAIResponsesClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -43,7 +66,7 @@ class OpenAIResponsesClient:
 
     async def create_response(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         use_web_search: bool,
     ) -> LLMResult:
