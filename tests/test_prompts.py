@@ -23,3 +23,11 @@ def test_system_prompt_avoids_robotic_opening_labels() -> None:
     assert "Пакко честно:" in SYSTEM_PROMPT
     assert "Коротко:" in SYSTEM_PROMPT
     assert "если отвечаешь по-русски, называй себя" not in SYSTEM_PROMPT
+
+
+def test_system_prompt_prioritizes_current_sources_for_news() -> None:
+    assert "ориентируйся на текущую дату UTC" in SYSTEM_PROMPT
+    assert "с датой публикации или обновления максимально близкой к ней" in SYSTEM_PROMPT
+    assert "для новостей" in SYSTEM_PROMPT
+    assert "сначала ищи материалы за сегодня" in SYSTEM_PROMPT
+    assert "явно называй их даты" in SYSTEM_PROMPT
