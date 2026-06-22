@@ -23,6 +23,18 @@ WEB_SEARCH_RETRY_PROMPT = """Предыдущая попытка ответа п
 Не начинай с технических пояснений о повторной попытке."""
 
 
+WEB_SEARCH_UNAVAILABLE_PROMPT = """Веб-поиск недоступен из-за технического сбоя.
+Ответь без веб-поиска: используй доступный контекст, знания модели и осторожные выводы.
+Не отказывайся от ответа только из-за отсутствия веб-проверки.
+Если вопрос зависит от свежих данных, кратко скажи пользователю,
+что интернет-проверка сейчас не сработала,
+и явно отдели уверенные факты от предположений."""
+
+EMPTY_RESPONSE_FALLBACK = (
+    "Я не получил содержательный ответ от модели. Попробуйте переформулировать запрос "
+    "или добавить деталей, и я разберу его по существу."
+)
+
 
 class AssistantService:
     def __init__(
@@ -62,8 +74,13 @@ class AssistantService:
 
         started_at = time.perf_counter()
         web_search_retry = False
+        web_search_fallback = False
         timed_out = False
-        result = await self._llm.create_response(messages, use_web_search=use_web_search)
+        result, web_search_fallback = await self._create_initial_response(
+            messages,
+            use_web_search=use_web_search,
+            chat_id=chat_id,
+        )
         assessment = self._apply_confidence_assessment(result)
 
         if self._should_retry_with_web_search(assessment, use_web_search, started_at):
@@ -78,7 +95,13 @@ class AssistantService:
             except TimeoutError:
                 timed_out = True
                 logger.warning("web_search_retry_timeout chat_id=%s", chat_id)
+            except Exception:
+                logger.warning("web_search_retry_failed chat_id=%s", chat_id, exc_info=True)
 
+        if not result.text.strip():
+            logger.warning("empty_assistant_response chat_id=%s", chat_id)
+            result.text = EMPTY_RESPONSE_FALLBACK
+            assessment = self._apply_confidence_assessment(result)
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
 
         response_text = result.text
@@ -91,7 +114,8 @@ class AssistantService:
 
         logger.info(
             (
-                "assistant_response chat_id=%s web_search_requested=%s web_search_retry=%s "
+                "assistant_response chat_id=%s web_search_requested=%s "
+                "web_search_retry=%s web_search_fallback=%s "
                 "web_search_used=%s confidence_level=%s source_reliability=%s "
                 "web_needed=%s confidence_marker_found=%s timed_out=%s sources=%s model=%s "
                 "tokens_in=%s tokens_out=%s tokens_total=%s cost_usd=%.6f elapsed_ms=%s "
@@ -100,6 +124,7 @@ class AssistantService:
             chat_id,
             use_web_search,
             web_search_retry,
+            web_search_fallback,
             result.web_search_used,
             assessment.level,
             assessment.source,
@@ -117,6 +142,26 @@ class AssistantService:
             len(input_attachments),
         )
         return response_text[: self._settings.max_response_chars].strip()
+
+    async def _create_initial_response(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        use_web_search: bool,
+        chat_id: int,
+    ) -> tuple[LLMResult, bool]:
+        try:
+            result = await self._llm.create_response(messages, use_web_search=use_web_search)
+            return result, False
+        except Exception:
+            if not use_web_search:
+                raise
+            logger.warning("web_search_initial_failed chat_id=%s", chat_id, exc_info=True)
+            result = await self._llm.create_response(
+                self._build_web_search_unavailable_messages(messages),
+                use_web_search=False,
+            )
+            return result, True
 
     async def _create_response_with_improvement_budget(
         self,
@@ -175,6 +220,18 @@ class AssistantService:
             messages[-1],
         ]
 
+    @staticmethod
+    def _build_web_search_unavailable_messages(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not messages:
+            return [{"role": "developer", "content": WEB_SEARCH_UNAVAILABLE_PROMPT}]
+        return [
+            *messages[:-1],
+            {"role": "developer", "content": WEB_SEARCH_UNAVAILABLE_PROMPT},
+            messages[-1],
+        ]
+
     def _build_messages(
         self,
         user_text: str,
@@ -223,4 +280,3 @@ class AssistantService:
             return user_text
         names = ", ".join(attachment.filename for attachment in attachments)
         return f"{user_text}\n\n[Attachments: {names}]"
-

@@ -15,9 +15,13 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = Field(alias="OPENAI_API_KEY")
 
     openai_model: str = Field(default="gpt-5.4-mini", alias="OPENAI_MODEL")
-    openai_reasoning_effort: ReasoningEffort = Field(default="low", alias="OPENAI_REASONING_EFFORT")
-    openai_timeout_seconds: float = Field(default=60.0, alias="OPENAI_TIMEOUT_SECONDS")
-    max_answer_seconds: float = Field(default=30.0, ge=5.0, alias="MAX_ANSWER_SECONDS")
+    openai_reasoning_effort: ReasoningEffort = Field(
+        default="medium",
+        alias="OPENAI_REASONING_EFFORT",
+    )
+    openai_timeout_seconds: float = Field(default=90.0, alias="OPENAI_TIMEOUT_SECONDS")
+    openai_request_retries: int = Field(default=3, ge=0, alias="OPENAI_REQUEST_RETRIES")
+    max_answer_seconds: float = Field(default=45.0, ge=5.0, alias="MAX_ANSWER_SECONDS")
     openai_input_price_usd_per_million: float = Field(
         default=0.75,
         alias="OPENAI_INPUT_PRICE_USD_PER_MILLION",
@@ -32,13 +36,13 @@ class Settings(BaseSettings):
 
     enable_web_search: bool = Field(default=True, alias="ENABLE_WEB_SEARCH")
     web_search_context_size: SearchContextSize = Field(
-        default="low",
+        default="medium",
         alias="WEB_SEARCH_CONTEXT_SIZE",
     )
 
     context_ttl_seconds: int = Field(default=600, ge=60, alias="CONTEXT_TTL_SECONDS")
-    max_recent_messages: int = Field(default=8, ge=2, alias="MAX_RECENT_MESSAGES")
-    summarize_after_messages: int = Field(default=16, ge=4, alias="SUMMARIZE_AFTER_MESSAGES")
+    max_recent_messages: int = Field(default=12, ge=2, alias="MAX_RECENT_MESSAGES")
+    summarize_after_messages: int = Field(default=24, ge=4, alias="SUMMARIZE_AFTER_MESSAGES")
     max_response_chars: int = Field(default=3500, ge=500, alias="MAX_RESPONSE_CHARS")
     max_input_file_bytes: int = Field(
         default=20_000_000,

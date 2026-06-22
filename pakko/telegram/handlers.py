@@ -246,6 +246,22 @@ async def _delete_message_safely(message: Message | None) -> None:
         logger.debug("failed_to_delete_status_message", exc_info=True)
 
 
+async def _answer_chunk_safely(
+    message: Message,
+    chunk: str,
+    reply_parameters: ReplyParameters | None,
+) -> None:
+    try:
+        await message.answer(
+            chunk,
+            parse_mode=ParseMode.HTML,
+            reply_parameters=reply_parameters,
+        )
+    except TelegramBadRequest:
+        logger.warning("failed_to_send_html_answer", exc_info=True)
+        await message.answer(chunk, reply_parameters=reply_parameters)
+
+
 def build_router(
     settings: Settings,
     assistant: AssistantService,
@@ -362,11 +378,7 @@ def build_router(
                 )
             await _delete_message_safely(status_message)
             for chunk in split_markdown_as_telegram_html(answer):
-                await message.answer(
-                    chunk,
-                    parse_mode=ParseMode.HTML,
-                    reply_parameters=reply_parameters,
-                )
+                await _answer_chunk_safely(message, chunk, reply_parameters)
         except Exception:
             await _delete_message_safely(status_message)
             logger.exception("failed_to_handle_message chat_id=%s", message.chat.id)

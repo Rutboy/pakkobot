@@ -250,3 +250,39 @@ async def test_answer_passes_attachments_to_last_user_message_without_storing_by
         "image_url": "data:image/jpeg;base64,aW1hZ2UtYnl0ZXM=",
     }
     assert memory.exchanges == [(123, "what is shown?\n\n[Attachments: photo.jpg]", "Image answer")]
+
+
+async def test_answer_falls_back_without_web_search_when_initial_search_fails() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM([
+        RuntimeError("search failed"),
+        make_result(
+            "Best available offline answer.",
+            level="medium",
+            source="none",
+            web_needed="yes",
+        ),
+    ])
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "explain rare term frobnicator")
+
+    assert answer == "Best available offline answer."
+    assert [use_web_search for _, use_web_search in llm.calls] == [True, False]
+    fallback_messages = llm.calls[1][0]
+    assert "Веб-поиск недоступен" in fallback_messages[-2]["content"]
+    assert memory.exchanges == [
+        (123, "explain rare term frobnicator", "Best available offline answer.")
+    ]
+
+
+async def test_answer_returns_non_empty_fallback_when_model_text_is_empty() -> None:
+    memory = FakeMemory()
+    llm = FakeLLM([make_result("", include_marker=False)])
+    assistant = AssistantService(make_settings(), memory, llm, FakeSummarization())  # type: ignore[arg-type]
+
+    answer = await assistant.answer(123, "explain rare term frobnicator")
+
+    assert answer
+    assert "не получил содержательный ответ" in answer
+    assert memory.exchanges == [(123, "explain rare term frobnicator", answer)]

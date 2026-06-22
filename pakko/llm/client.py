@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from base64 import b64encode
@@ -5,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from pakko.config import Settings
 
@@ -15,6 +16,7 @@ TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "yclid", "mc_cid", "mc_eid", "igshid", "ref"}
 MAX_INLINE_CITATIONS = 5
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)]\((https?://[^\s)]+)\)")
+RETRYABLE_STATUS_CODES = {408, 409, 429}
 
 
 @dataclass(slots=True)
@@ -85,7 +87,7 @@ class OpenAIResponsesClient:
             ]
             params["tool_choice"] = "required"
 
-        response = await self._client.responses.create(**params)
+        response = await self._create_with_retries(params)
         text = self._extract_text(response)
         usage = self._extract_usage(response)
         sources = self._extract_sources(response)
@@ -106,7 +108,7 @@ class OpenAIResponsesClient:
         if self._settings.openai_reasoning_effort != "none":
             params["reasoning"] = {"effort": "low"}
 
-        response = await self._client.responses.create(**params)
+        response = await self._create_with_retries(params)
         return LLMResult(
             text=self._extract_text(response),
             usage=self._extract_usage(response),
@@ -114,6 +116,31 @@ class OpenAIResponsesClient:
             sources=[],
             web_search_used=False,
         )
+
+    async def _create_with_retries(self, params: dict[str, Any]) -> Any:
+        max_attempts = self._settings.openai_request_retries + 1
+        for attempt in range(max_attempts):
+            try:
+                return await self._client.responses.create(**params)
+            except Exception as exc:
+                if attempt >= max_attempts - 1 or not self._is_retryable_error(exc):
+                    raise
+                logger.warning(
+                    "openai_response_retry attempt=%s max_attempts=%s error=%s",
+                    attempt + 1,
+                    max_attempts,
+                    exc.__class__.__name__,
+                )
+                await asyncio.sleep(min(2.0, 0.25 * (2**attempt)))
+        raise RuntimeError("OpenAI response retry loop exhausted")
+
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        if isinstance(exc, (APIConnectionError, APITimeoutError, RateLimitError)):
+            return True
+        if isinstance(exc, APIStatusError):
+            return exc.status_code in RETRYABLE_STATUS_CODES or exc.status_code >= 500
+        return False
 
     def _extract_usage(self, response: Any) -> LLMUsage:
         raw_usage = getattr(response, "usage", None)
